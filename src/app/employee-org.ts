@@ -1,175 +1,148 @@
-import {Employee} from '../interface/employee';
+import { Employee } from "../interface/employee";
+import { Action, StackTraceManager } from "./stack-trace-manager";
 
-class EmployeeOrg {
-    private ceo: Employee;
-    private actionStack = new StackTraceManager();
+export class EmployeeOrg {
+  private ceo: Employee;
+  private actionStack = new StackTraceManager();
 
-    constructor(ceo: Employee) {
-        this.ceo = ceo;
+  constructor(ceo: Employee) {
+    this.ceo = ceo;
+  }
+
+  find(id: number, currentEmployee = this.ceo): Employee | null {
+    if (currentEmployee.uniqueId === id) {
+      return currentEmployee;
     }
 
-    find(id: number, currentEmployee = this.ceo): Employee | null {
-        if (currentEmployee.uniqueId === id) {
-            return currentEmployee;
-        }
-
-        for (const employee of currentEmployee.subordinates) {
-            const findEmployee = this.find(id, employee);
-            if (findEmployee) {
-                return findEmployee;
-            }
-        }
-
-        return null;
+    for (const employee of currentEmployee.subordinates) {
+      const findEmployee = this.find(id, employee);
+      if (findEmployee) {
+        return findEmployee;
+      }
     }
 
-    add(newEmployee: Employee, supervisorId: number) {
-        const supervisor = this.find(supervisorId);
+    return null;
+  }
 
-        if (supervisor === null) {
-            console.warn('Not found supervisor with ID:', supervisorId)
-            return;
-        }
+  add(newEmployee: Employee, supervisorId: number) {
+    const supervisor = this.find(supervisorId);
 
-        supervisor.subordinates.push(newEmployee);
+    if (supervisor === null) {
+      console.warn("Not found supervisor with ID:", supervisorId);
+      return;
     }
 
-    move(employeeId: number, supervisorId: number) {
-        const employee = this.find(employeeId)
-        const newSupervisor = this.find(supervisorId);
+    newEmployee.supervisor = supervisor;
 
-        if (!newSupervisor) {
-            console.warn('Not found supervisor with ID:', supervisorId)
-            return;
-        }
-        if (!employee) {
-            console.warn('Not found employee with ID:', employeeId)
-            return;
-        }
-        if (!employee.supervisor) {
-            console.warn('cannot move ceo: ', employeeId)
-            return;
-        }
-        // execute move logic
-        newSupervisor.subordinates.push(employee);
-        this.actionStack.pushAction(
-            {
-                undo: {type: 'remove', subject: newSupervisor, item: employee},
-                redo: {type: 'add', subject: newSupervisor, item: employee}
-            }
-        );
-        const oldSupervisor = employee.supervisor;
-        employee.supervisor = newSupervisor;
-        this.actionStack.pushAction(
-            {
-                undo: {type: 'set', subject: employee, item: oldSupervisor},
-                redo: {type: 'set', subject: employee, item: newSupervisor}
-            }
-        );
-        oldSupervisor.subordinates.splice(
-            // might need to improve this?
-            oldSupervisor.subordinates.findIndex(e => e === employee),
-            1,
-        );
-        this.actionStack.pushAction(
-            {
-                undo: {type: 'add', subject: oldSupervisor, item: employee},
-                redo: {type: 'remove', subject: oldSupervisor, item: employee}
-            }
-        )
-        // remove all subordinates of employee
-        const subordinates = employee.subordinates.splice(0);
-        this.actionStack.pushAction(
-            {
-                undo: {type: 'return', subject: employee, item: subordinates},
-                redo: {type: 'splice', subject: employee, item: subordinates}
-            }
-        );
-        oldSupervisor.subordinates.concat(
-            // concat those to oldSupervisor
-            subordinates
-        );
-        this.actionStack.pushAction(
-            {
-                undo: {type: 'splice', subject: oldSupervisor, item: subordinates},
-                redo: {type: 'return', subject: oldSupervisor, item: subordinates}
-            }
-        );
+    supervisor.subordinates.push(newEmployee);
+  }
+
+  move(employeeId: number, supervisorId: number) {
+    const employee = this.find(employeeId);
+    const newSupervisor = this.find(supervisorId);
+
+    if (!newSupervisor) {
+      console.warn("Not found supervisor with ID:", supervisorId);
+      return;
     }
-
-    undoMove() {
-        this.actionStack.undo();
+    if (!employee) {
+      console.warn("Not found employee with ID:", employeeId);
+      return;
     }
-
-    redoMove() {
-        this.actionStack.redo();
+    if (!employee.supervisor) {
+      console.warn("cannot move ceo: ", employeeId);
+      return;
     }
-}
+    const traceActions: Action = {
+      undo: [],
+      redo: [],
+    };
 
-type TraceAction = { item: Employee; subject: Employee; type: 'add' | 'remove' | 'set' } | {
-    item: Employee[]
-    type: 'splice' | 'return',
-    subject: Employee
-}
-type Action = {
-    undo: TraceAction;
-    redo: TraceAction;
-}
+    // execute move logic
+    newSupervisor.subordinates.push(employee);
+    traceActions.undo.push({
+      type: "remove",
+      subject: newSupervisor,
+      item: employee,
+    });
+    traceActions.redo.push({
+      type: "add",
+      subject: newSupervisor,
+      item: employee,
+    });
+    const oldSupervisor = employee.supervisor;
+    employee.supervisor = newSupervisor;
+    traceActions.undo.push({
+      type: "set",
+      subject: employee,
+      item: oldSupervisor,
+    });
+    traceActions.redo.push({
+      type: "set",
+      subject: employee,
+      item: newSupervisor,
+    });
+    oldSupervisor.subordinates.splice(
+      oldSupervisor.subordinates.findIndex((e) => e === employee), // might need to improve this?
+      1
+    );
+    traceActions.undo.push({
+      type: "add",
+      subject: oldSupervisor,
+      item: employee,
+    });
+    traceActions.redo.push({
+      type: "remove",
+      subject: oldSupervisor,
+      item: employee,
+    });
+    // remove all subordinates of employee
+    const subordinates = employee.subordinates.splice(0);
+    traceActions.undo.push({
+      type: "return",
+      subject: employee,
+      item: subordinates,
+    });
+    traceActions.redo.push({
+      type: "splice",
+      subject: employee,
+      item: subordinates,
+    });
+    subordinates.forEach((subordinate) =>
+      oldSupervisor.subordinates.push(
+        // concat those to oldSupervisor
+        subordinate
+      )
+    );
 
-class StackTraceManager {
-    actionUnDo: Action[] = []
-    actionRedo: Action[] = []
+    traceActions.undo.push({
+      type: "splice",
+      subject: oldSupervisor,
+      item: subordinates,
+    });
+    traceActions.redo.push({
+      type: "return",
+      subject: oldSupervisor,
+      item: subordinates,
+    });
+    this.actionStack.pushAction(traceActions);
+  }
 
+  undoMove() {
+    this.actionStack.undo();
+  }
 
-    undo() {
-        const action = this.actionUnDo.pop();
-        if (!action) return;
-        // exec action
-        this.execAction(action.undo);
-        this.actionRedo.push(action);
-    }
+  redoMove() {
+    this.actionStack.redo();
+  }
 
-    redo() {
-        const action = this.actionRedo.pop();
-        if (!action) return;
-        // exec action
-        this.execAction(action.redo);
-        this.actionUnDo.push(action);
-    }
-
-    pushAction(action: Action) {
-        this.actionRedo = []
-        this.actionUnDo.push(action)
-    }
-
-    private execAction(traceAction: TraceAction) {
-        switch (traceAction.type) {
-            case 'add':
-                traceAction.subject.subordinates.push(traceAction.item)
-                break;
-            case 'set':
-                traceAction.subject.supervisor = traceAction.item;
-                break;
-            case 'return':
-                traceAction.subject.subordinates.concat(traceAction.item)
-                break;
-            case 'splice':
-                traceAction.subject.subordinates.splice(
-                    traceAction.subject.subordinates.findIndex(
-                        e => e === traceAction.item[0]
-                    ),
-                    traceAction.item.length
-                );
-                break;
-            case 'remove':
-                traceAction.subject.subordinates.splice(
-                    // might need to improve this?
-                    traceAction.subject.subordinates.findIndex(e => e === traceAction.item),
-                    1,
-                );
-                break;
-            default:
-                console.log('No action')
-        }
-    }
+  display(step = 1, employee: Employee = this.ceo) {
+    const padding = Array(step - 1)
+      .fill("  ")
+      .join("");
+    console.log(`${padding}-${employee.name}`);
+    employee.subordinates.forEach((subordinate) =>
+      this.display(step + 1, subordinate)
+    );
+  }
 }
